@@ -25,10 +25,10 @@ spec:
             - containerPort: 8000
           env:
             - name: DATABASE_URL
-              value: postgresql://doadmin:AVNS_tLHwSptCdxhUxvebxb2@private-db-homolog-do-user-25736477-0.d.db.ondigitalocean.com:25060/defaultdb?sslmode=requir
-              #secretKeyRef:
-              #  name: database-secret
-              #  key: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database-secret
+                  key: DATABASE_URL
 ---
 apiVersion: v1
 kind: Service
