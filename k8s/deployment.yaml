@@ -20,7 +20,8 @@ spec:
     spec:
       containers:
         - name: encontros-tech
-          image: enchenu/encontros-tech:v${{ github.run_number }}
+          image: enchenu/encontros-tech:latest
+          imagePullPolicy: Always 
           ports:
             - containerPort: 8000
           env:
