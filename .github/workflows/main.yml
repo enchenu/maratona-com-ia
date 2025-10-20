@@ -6,107 +6,102 @@ on:
   workflow_dispatch:
 
 jobs:
-  CI:
-    runs-on: ubuntu-latest
-    outputs:
-      image_tag: v${{ github.run_number }}
-    steps:
-      - name: Checkout do código
-        uses: actions/checkout@v5
+    CI:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Obtendo o código do projeto
+              uses: actions/checkout@v5
 
-      - name: Setup do Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
+            - name: Setup do Python
+              uses: actions/setup-python@v6
+              with:
+                python-version: '3.13' 
 
-      - name: Instalar dependências
-        working-directory: ./src
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+            - name: Instalação das Dependencias 
+              working-directory: ./src
+              run: |
+                python -m pip install --upgrade pip
+                pip install -r requirements.txt
+                
+            - name: Execução dos testes
+              working-directory: ./src
+              run: |
+                python -m pytest tests/ -v                 
 
-      - name: Executar testes
-        working-directory: ./src
-        run: |
-          python -m pytest tests/ -v
+            - name: Login to Docker Hub
+              uses: docker/login-action@v3
+              with: 
+                username: ${{ vars.DOCKERHUB_USERNAME }}
+                password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Login no Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+            - name: Build and push Docker image
+              uses: docker/build-push-action@v5
+              with:
+                context: ./src
+                file: ./src/Dockerfile
+                push: true
+                tags: |
+                  enchenu/encontros-tech:latest
+                  enchenu/encontros-tech:v${{ github.run_number }}                 
 
-      - name: Build e push da imagem Docker
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: ./src
-          file: ./src/Dockerfile
-          push: true
-          tags: |
-            enchenu/encontros-tech:latest
-            enchenu/encontros-tech:v${{ github.run_number }}
+    CD-Homolog:
+        runs-on: ubuntu-latest
+        needs: [CI]
+        environment: homologacao
+        steps:
+            - name: Obtendo o código do projeto
+              uses: actions/checkout@v5
 
-  CD-Homolog:
-    runs-on: ubuntu-latest
-    needs: [CI]
-    environment: homologacao
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+            - name: Configurar contexto Kubernetes
+              uses: azure/k8s-set-context@v4
+              with:
+                method: kubeconfig
+                kubeconfig: ${{ secrets.KUBE_CONFIG }}
 
-      - name: Configurar contexto Kubernetes
-        uses: azure/k8s-set-context@v4
-        with:
-          method: kubeconfig
-          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+            - name: Criar namespace de homologação
+              run: kubectl create namespace tech-homolog --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Criar namespace de homologação
-        run: kubectl create namespace tech-homolog --dry-run=client -o yaml | kubectl apply -f -
+            - name: Create secrets in prod
+              run: |
+                kubectl create secret generic database-secret \
+                  --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+                  --namespace=tech-homolog \
+                  --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Criar secret do banco
-        run: |
-          kubectl create secret generic database-secret \
-            --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
-            --namespace=tech-homolog \
-            --dry-run=client -o yaml | kubectl apply -f -
+            - name: Deploy no ambiente de homologação
+              uses: azure/k8s-deploy@v5
+              with:
+                namespace: 'tech-homolog'
+                manifests: |
+                  k8s/deployment.yaml
 
-      - name: Aplicar manifestos
-        run: kubectl apply -f k8s/deployment.yaml -n tech-homolog
+    CD-Prod:
+        runs-on: ubuntu-latest
+        needs: [CD-Homolog]
+        environment: producao
+        steps:
+            - name: Obtendo o código do projeto
+              uses: actions/checkout@v5
 
-      - name: Atualizar imagem para a versão atual
-        run: |
-          IMAGE_TAG=v${{ github.run_number }}
-          kubectl set image deployment/encontros-tech encontros-tech=enchenu/encontros-tech:$IMAGE_TAG -n tech-homolog
+            - name: Configurar contexto Kubernetes
+              uses: azure/k8s-set-context@v4
+              with:
+                method: kubeconfig
+                kubeconfig: ${{ secrets.KUBE_CONFIG }}
 
-  CD-Prod:
-    runs-on: ubuntu-latest
-    needs: [CD-Homolog]
-    environment: producao
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+            - name: Criar namespace de produção
+              run: kubectl create namespace tech-prod --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Configurar contexto Kubernetes
-        uses: azure/k8s-set-context@v4
-        with:
-          method: kubeconfig
-          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+            - name: Create secrets in prod
+              run: |
+                kubectl create secret generic database-secret \
+                  --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+                  --namespace=tech-prod \
+                  --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Criar namespace de produção
-        run: kubectl create namespace tech-prod --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Criar secret do banco
-        run: |
-          kubectl create secret generic database-secret \
-            --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
-            --namespace=tech-prod \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Aplicar manifestos
-        run: kubectl apply -f k8s/deployment.yaml -n tech-prod
-
-      - name: Atualizar imagem para a versão atual
-        run: |
-          IMAGE_TAG=v${{ github.run_number }}
-          kubectl set image deployment/encontros-tech encontros-tech=enchenu/encontros-tech:$IMAGE_TAG -n tech-prod
+            - name: Deploy no ambiente de produção
+              uses: azure/k8s-deploy@v5
+              with:
+                namespace: 'tech-prod'
+                manifests: |
+                  k8s/deployment.yaml
