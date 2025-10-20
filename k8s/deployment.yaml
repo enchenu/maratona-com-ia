@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: encontros-tech
-          image: enchenu/encontros-tech
+          image: enchenu/encontros-tech:v${{ github.run_number }}
           ports:
             - containerPort: 8000
           env:
